@@ -42,6 +42,7 @@ class PlotWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._contour_lines: list = []   # vertical line artists for show/hide
         self._setup_ui()
 
     # ------------------------------------------------------------------ layout
@@ -57,8 +58,9 @@ class PlotWidget(QWidget):
         plot_layout = QVBoxLayout(plot_container)
         plot_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._figure = Figure(figsize=(10, 5), tight_layout=True)
+        self._figure = Figure(tight_layout=True)   # no fixed figsize — Qt controls sizing
         self._canvas = FigureCanvas(self._figure)
+        self._canvas.setMinimumWidth(400)
         self._ax     = self._figure.add_subplot(111)
         self._toolbar = NavigationToolbar(self._canvas, self)
 
@@ -90,8 +92,9 @@ class PlotWidget(QWidget):
         self._show_contours_cb = QCheckBox("Show contour lines")
         self._show_contours_cb.setChecked(True)
         self._show_contours_cb.setToolTip(
-            "Draw dotted vertical lines at each dB-below-peak contour angle"
+            "Show/hide dotted vertical lines at each dB-below-peak contour angle"
         )
+        self._show_contours_cb.stateChanged.connect(self._toggle_contour_lines)
         ctrl_layout.addWidget(self._show_contours_cb)
         ctrl_layout.addStretch()
 
@@ -177,14 +180,18 @@ class PlotWidget(QWidget):
         theta_nadir   = nadir_angle_from_elevation(elev_angle, orbit_alt)
         mf = QFont("Courier New", 9)
 
+        self._contour_lines.clear()
         for row, (db, color) in enumerate(zip(DB_LEVELS, _CONTOUR_COLORS)):
             angle = _first_descent(phi_pos, G_pos, gmax - db)
             if angle is not None:
-                if show_contours:
-                    self._ax.axvline(x= angle, color=color, linewidth=0.8,
-                                     linestyle=':', alpha=0.7)
-                    self._ax.axvline(x=-angle, color=color, linewidth=0.8,
-                                     linestyle=':', alpha=0.7)
+                # Always draw; visibility controlled by checkbox
+                l1 = self._ax.axvline(x= angle, color=color, linewidth=0.8,
+                                      linestyle=':', alpha=0.7,
+                                      visible=show_contours)
+                l2 = self._ax.axvline(x=-angle, color=color, linewidth=0.8,
+                                      linestyle=':', alpha=0.7,
+                                      visible=show_contours)
+                self._contour_lines.extend([l1, l2])
                 nadir_scan = theta_nadir + angle
                 self._table.setItem(row, 1, _cell(f"{angle:.3f}", mf))
                 self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", mf))
@@ -257,6 +264,8 @@ class PlotWidget(QWidget):
             G580_pre = p580.gain(phi, {'d_over_lambda': dλ, 'era': 'Pre-1995'})
             curves.append((f"S.580 pre-1995  D/λ={dλ:g}", G580_pre))
 
+        self._contour_lines.clear()
+
         # Plot
         self._ax.clear()
         default_colors = list(_COMPARE_COLORS.values())
@@ -291,6 +300,15 @@ class PlotWidget(QWidget):
             self._table.setItem(row, 1, _cell("—", mf))
             self._table.setItem(row, 2, _cell("—", mf))
             self._table.setItem(row, 3, _cell("compare mode", mf))
+
+    # --------------------------------------------------------------- contours
+
+    def _toggle_contour_lines(self):
+        """Immediately show or hide all stored contour lines without re-calculating."""
+        visible = self._show_contours_cb.isChecked()
+        for line in self._contour_lines:
+            line.set_visible(visible)
+        self._canvas.draw_idle()
 
     # ----------------------------------------------------------------- axes
 
