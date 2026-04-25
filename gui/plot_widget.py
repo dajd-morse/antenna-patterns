@@ -2,7 +2,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QGroupBox,
-    QLabel, QDoubleSpinBox, QPushButton,
+    QLabel, QDoubleSpinBox, QPushButton, QCheckBox,
     QFileDialog, QHeaderView, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt
@@ -71,6 +71,13 @@ class PlotWidget(QWidget):
         save_btn = QPushButton("Save PNG…")
         save_btn.clicked.connect(self._save_png)
         ctrl_layout.addWidget(save_btn)
+
+        self._show_contours_cb = QCheckBox("Show contour lines")
+        self._show_contours_cb.setChecked(True)
+        self._show_contours_cb.setToolTip(
+            "Draw vertical dotted lines at each dB-below-peak contour angle"
+        )
+        ctrl_layout.addWidget(self._show_contours_cb)
         ctrl_layout.addStretch()
 
         plot_layout.addWidget(self._toolbar)
@@ -153,20 +160,21 @@ class PlotWidget(QWidget):
                   '#0055aa', '#aa0055', '#005555']
         theta_nadir = nadir_angle_from_elevation(elev_angle, orbit_alt)
 
+        show_contours = self._show_contours_cb.isChecked()
         f = QFont("Courier New", 9)
         for row, (db, color) in enumerate(zip(DB_LEVELS, colors)):
             target = gmax - db
             angle = _first_descent(phi_pos, G_pos, target)
             if angle is not None:
-                self._ax.axvline(x=angle, color=color, linewidth=0.8,
-                                 linestyle=':', alpha=0.7)
-                self._ax.axvline(x=-angle, color=color, linewidth=0.8,
-                                 linestyle=':', alpha=0.7)
+                if show_contours:
+                    self._ax.axvline(x=angle, color=color, linewidth=0.8,
+                                     linestyle=':', alpha=0.7)
+                    self._ax.axvline(x=-angle, color=color, linewidth=0.8,
+                                     linestyle=':', alpha=0.7)
                 nadir_scan = theta_nadir + angle
-                note = ""
                 self._table.setItem(row, 1, _cell(f"{angle:.3f}", f))
                 self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", f))
-                self._table.setItem(row, 3, _cell(note, f))
+                self._table.setItem(row, 3, _cell("", f))
             else:
                 self._table.setItem(row, 1, _cell("N/A", f))
                 self._table.setItem(row, 2, _cell("N/A", f))

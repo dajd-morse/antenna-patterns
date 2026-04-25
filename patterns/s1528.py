@@ -1,15 +1,22 @@
 """
 ITU-R S.1528 — Reference antenna gain pattern for non-GSO FSS space stations.
 
-Pattern structure (D/λ ≥ 100):
-  G(φ) = Gmax − 2.5×10⁻³(D/λ · φ)²   0 ≤ |φ| ≤ φm
-  G(φ) = Ls                             φm < |φ| ≤ φr
-  G(φ) = 32 − 25 log(|φ|)             φr < |φ| ≤ 48°
-  G(φ) = −10 dBi                        48° < |φ| ≤ 180°
+Gaussian main lobe rolling off into a log-taper sidelobe region, terminating
+at a flat far-field floor.
 
-For D/λ < 100 the outer sidelobe formula changes to 52 − 10 log(D/λ) − 25 log(φ).
-φm = (20/Dλ) × sqrt(Gmax − Ls)
-φr = 10^((32 − Ls)/25)  for D/λ ≥ 100
+  G(ψ) = Gm − 3·(ψ/ψb)²                   0 ≤ |ψ| ≤ Y
+  G(ψ) = (Gm + Ls) − 25·log₁₀(|ψ|/Y)      Y < |ψ| ≤ Z
+  G(ψ) = LF                                  |ψ| > Z
+
+Transition angles:
+  Y = ψb × sqrt(−Ls / 3)                 [main lobe drops to Ls below peak]
+  Z = Y × 10^(0.04 × (Gm + Ls − LF))    [sidelobe rolloff reaches floor LF]
+
+Parameters:
+  Gm  — peak gain (dBi)
+  ψb  — 3 dB half-beamwidth (deg); Calc button suggests ≈ 32.5 / (D/λ)
+  Ls  — near sidelobe level RELATIVE to peak (dB, negative); default −15 dB
+  LF  — far-field floor (dBi); default 0 dBi
 """
 import numpy as np
 from .base import AntennaPattern, ParamSpec
@@ -25,58 +32,54 @@ class S1528Pattern(AntennaPattern):
 
     def get_params_spec(self) -> list[ParamSpec]:
         return [
-            ParamSpec('gmax', 'Peak Gain', 'float', 30.0, 0.0, 65.0, 0.5,
+            ParamSpec('gmax', 'Peak Gain', 'float', 32.3, 0.0, 65.0, 0.1,
                       units='dBi',
                       tooltip='Maximum gain at boresight'),
-            ParamSpec('ls', 'Near Sidelobe Level (Ls)', 'float', -15.0, -40.0, 30.0, 0.5,
+            ParamSpec('psi_b', '3 dB Half-Beamwidth (ψb)', 'float', 1.0, 0.001, 90.0, 0.01,
+                      units='deg',
+                      tooltip='Half-power (3 dB) half-beamwidth. '
+                              'Click Calc for an estimate from peak gain (≈ 32.5 / (D/λ)).',
+                      computed=True),
+            ParamSpec('ls', 'Near Sidelobe Level (Ls)', 'float', -15.0, -60.0, -0.1, 0.5,
+                      units='dB re peak',
+                      tooltip='Sidelobe level relative to peak gain (must be negative). '
+                              'ITU-R S.1528 default: −15 dB'),
+            ParamSpec('lf', 'Far-Field Floor (LF)', 'float', 0.0, -30.0, 30.0, 0.5,
                       units='dBi',
-                      tooltip='Near sidelobe plateau level. ITU-R default: −15 dBi'),
+                      tooltip='Absolute gain floor beyond the sidelobe region. '
+                              'ITU-R S.1528 default: 0 dBi'),
             ParamSpec('mode', 'Antenna Mode', 'choice', 'Transmit',
                       choices=['Transmit', 'Receive'],
-                      tooltip='Transmit uses standard outer-sidelobe rolloff; '
-                              'Receive uses same formula (Ls default differs)'),
+                      tooltip='TX/RX label — both use the same piecewise formula'),
         ]
 
+    def suggest_derived(self, name: str, params: dict):
+        if name == 'psi_b':
+            gmax = params.get('gmax', 30.0)
+            return round(32.5 / _dλ(gmax), 3)
+        return None
+
     def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:
-        gmax = params['gmax']
-        ls = params['ls']
-        dλ = _dλ(gmax)
+        gm   = params['gmax']
+        psi_b = max(float(params['psi_b']), 1e-9)
+        ls   = float(params['ls'])    # negative dB relative to peak
+        lf   = float(params['lf'])    # absolute floor dBi
+
+        if ls >= 0:
+            ls = -0.01  # guard: must be negative
 
         phi = np.abs(phi)
-        G = np.full_like(phi, -10.0, dtype=float)
+        G = np.full_like(phi, lf, dtype=float)
 
-        if gmax <= ls:
-            return G  # degenerate case
+        Y = psi_b * np.sqrt(-ls / 3.0)
+        Z = Y * 10 ** (0.04 * (gm + ls - lf))
 
-        phi_m = (20.0 / dλ) * np.sqrt(gmax - ls)
+        r1 = phi <= Y
+        r2 = (phi > Y) & (phi <= Z)
 
-        if dλ >= 100:
-            phi_r = 10 ** ((32.0 - ls) / 25.0)
-            phi_r = max(phi_r, phi_m)
-
-            r1 = phi <= phi_m
-            r2 = (phi > phi_m) & (phi <= phi_r)
-            r3 = (phi > phi_r) & (phi <= 48.0)
-
-            G[r1] = gmax - 2.5e-3 * (dλ * phi[r1]) ** 2
-            G[r2] = ls
-            with np.errstate(divide='ignore', invalid='ignore'):
-                G[r3] = 32.0 - 25.0 * np.log10(np.where(phi[r3] > 0, phi[r3], 1e-9))
-        else:
-            outer_floor = 10.0 - 10.0 * np.log10(dλ)
-            outer_sl = 52.0 - 10.0 * np.log10(dλ)
-            phi_r = 10 ** ((outer_sl - ls) / 25.0)
-            phi_r = max(phi_r, phi_m)
-
-            r1 = phi <= phi_m
-            r2 = (phi > phi_m) & (phi <= phi_r)
-            r3 = (phi > phi_r) & (phi <= 48.0)
-            r4 = phi > 48.0
-
-            G[r1] = gmax - 2.5e-3 * (dλ * phi[r1]) ** 2
-            G[r2] = ls
-            with np.errstate(divide='ignore', invalid='ignore'):
-                G[r3] = outer_sl - 25.0 * np.log10(np.where(phi[r3] > 0, phi[r3], 1e-9))
-            G[r4] = outer_floor
+        G[r1] = gm - 3.0 * (phi[r1] / psi_b) ** 2
+        with np.errstate(divide='ignore', invalid='ignore'):
+            psi_r2 = np.where(phi[r2] > 0, phi[r2], 1e-30)
+            G[r2] = (gm + ls) - 25.0 * np.log10(psi_r2 / Y)
 
         return G

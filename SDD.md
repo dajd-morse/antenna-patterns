@@ -79,28 +79,29 @@ The GUI builds the input panel entirely from `ParamSpec` metadata — no GUI cha
 
 **Applicable to:** Non-geostationary FSS space station transmit/receive antennas.
 
-**D/λ derived from peak gain** (antenna efficiency η = 0.6 assumed):
+**Parameters:**
 
-```
-D/λ = sqrt(10^(Gmax/10) / η) / π
-```
+| Symbol | Name | Default | Notes |
+|--------|------|---------|-------|
+| Gm | Peak gain | 32.3 dBi | Maximum gain at boresight |
+| ψb | 3 dB half-beamwidth | 1.0° | User input; Calc button suggests ≈ 32.5/(D/λ) |
+| Ls | Sidelobe level | −15 dB | **Relative to peak** (negative value) |
+| LF | Far-field floor | 0 dBi | Absolute level |
 
-**Piecewise formula (D/λ ≥ 100):**
+**Piecewise formula:**
 
 | Region | Condition | Formula |
 |--------|-----------|---------|
-| Main lobe | 0 ≤ \|φ\| ≤ φm | Gmax − 2.5×10⁻³·(D/λ·φ)² |
-| Near sidelobe plateau | φm < \|φ\| ≤ φr | Ls (dBi) |
-| Far sidelobe | φr < \|φ\| ≤ 48° | 32 − 25·log₁₀(\|φ\|) |
-| Floor | \|φ\| > 48° | −10 dBi |
+| Gaussian main lobe | 0 ≤ \|ψ\| ≤ Y | Gm − 3·(ψ/ψb)² |
+| Log-taper sidelobe | Y < \|ψ\| ≤ Z | (Gm + Ls) − 25·log₁₀(\|ψ\|/Y) |
+| Far-field floor | \|ψ\| > Z | LF |
 
 Transition angles:
-- `φm = (20/Dλ) × sqrt(Gmax − Ls)` (main lobe → plateau)
-- `φr = 10^((32 − Ls) / 25)` (plateau → far sidelobe, for D/λ ≥ 100)
+- `Y = ψb × sqrt(−Ls / 3)` — angle at which Gaussian drops to Ls below peak; sidelobe formula begins here with gain = Gm + Ls (continuous)
+- `Z = Y × 10^(0.04 × (Gm + Ls − LF))` — angle at which log-taper rolloff reaches the floor LF (continuous)
 
-For **D/λ < 100** the far-sidelobe formula becomes `52 − 10·log₁₀(D/λ) − 25·log₁₀(φ)` and the floor is `10 − 10·log₁₀(D/λ)`.
-
-**Default Ls:** −15 dBi (ITU-R S.1528 recommended value).
+**Example (Gm = 32.3 dBi, ψb = 1.0°, Ls = −15 dB, LF = 0 dBi):**  
+Y = 2.236°, Z = 11.00°, gain at Y = 17.3 dBi, gain at Z = 0 dBi.
 
 #### 3.2.2 ITU-R S.672
 
@@ -234,23 +235,17 @@ PlotWidget.update_plot(pattern, pattern_params, common_params)
 
 > **These items should be verified against the current published ITU-R Recommendations before using results in coordination filings or interference studies.**
 
-### 5.1 D/λ Derivation
+### 5.1 S.1528 Beamwidth Estimate (ψb)
 
-The tool derives D/λ from peak gain using:
+The "Calc" button for ψb uses `32.5 / (D/λ)` where D/λ is derived from peak gain assuming η = 0.6 efficiency. This gives a rough half-power beamwidth estimate. The **actual** 3 dB half-beamwidth of your antenna may differ significantly — it should come from the antenna specification or measured pattern, not from this formula.
 
-```
-D/λ = sqrt(10^(Gmax/10) / η) / π,   η = 0.6  (60% efficiency)
-```
-
-**Check:** The ITU-R formulae in S.1528, S.580, and S.465 are stated in terms of D/λ, not peak gain directly. If you know the actual D/λ of your antenna (from the manufacturer or link budget), the tool may yield slightly different transition angles than the correct ones because of the η assumption. A 55%–65% efficiency spread changes D/λ by roughly ±4%, which shifts φm and φr by the same proportion.
-
-*Recommended: Add a direct D/λ input field as an alternative to peak gain.*
+*ψb is the most critical input for S.1528: it sets the scale of the entire pattern. Always verify against the real antenna datasheet.*
 
 ### 5.2 S.1528 TX vs. RX Distinction
 
-The current implementation applies the same piecewise formula for both transmit and receive modes; the selection only labels the plot. The published S.1528 recommendation may specify different Ls defaults or slightly different rolloff coefficients for the receive case.
+The TX/RX selector is a label only — both modes use the same piecewise formula. The published S.1528 may specify different default Ls values for transmit vs. receive cases.
 
-**Check:** Confirm with the current revision of ITU-R S.1528 whether TX and RX envelope formulae differ, and update `s1528.py` accordingly if so.
+**Check:** Confirm with the current revision of ITU-R S.1528 whether TX and RX patterns differ, and update `s1528.py` accordingly if so.
 
 ### 5.3 S.672 Sidelobe Floor Beyond φe
 
