@@ -1,89 +1,95 @@
 """
-ITU-R S.672 — Space station reference antenna gain pattern.
+ITU-R S.672 — Space station reference antenna gain pattern (single-feed).
 
-Gaussian main lobe + near-sidelobe plateau + far-sidelobe rolloff.
-Two standard plateau options: Ls = Gmax − 10 dB  or  Ls = Gmax − 20 dB.
+Four-region envelope from Annex 1, Figure 1. Ls is restricted to the three
+tabulated values: −20, −25, or −30 dB (relative to peak).
 
-  G(φ) = Gmax − 12(φ/φ₀)²        0 ≤ |φ| ≤ φs
-  G(φ) = Ls                        φs < |φ| ≤ φe
-  G(φ) = 32 − 25 log(|φ|)        φe < |φ| ≤ 48°
-  G(φ) = −10 dBi                   48° < |φ| ≤ 180°
+  G(ψ) = Gm − 3·(ψ/ψ₀)²              0 < |ψ| ≤ a·ψ₀       (Gaussian main lobe)
+  G(ψ) = Gm + Ls                       a·ψ₀ < |ψ| ≤ b·ψ₀    (sidelobe plateau)
+  G(ψ) = Gm + Ls + 20 − 25·log₁₀(|ψ|/ψ₀)   b·ψ₀ < |ψ| ≤ ψ₁   (log-taper rolloff)
+  G(ψ) = 0 dBi                          |ψ| > ψ₁              (far-field floor)
 
-φ₀  = 3 dB half-beamwidth
-φs  = φ₀ × sqrt((Gmax − Ls) / 12)     [main lobe → plateau transition]
-φe  = 10^((32 − Ls) / 25)              [plateau → 32−25log transition]
+Coefficients (from ITU-R S.672 Annex 1 Table):
+  Ls = −20 dB → a = 2.58, b = 6.32
+  Ls = −25 dB → a = 2.88, b = 6.32
+  Ls = −30 dB → a = 3.16, b = 6.32
+
+  ψ₁ = b·ψ₀ · 10^(0.04·(Gm + Ls))   [rolloff reaches 0 dBi at ψ₁]
+
+ψ₀ is the 3 dB half-beamwidth (Gaussian drops 3 dB at ψ = ψ₀).
+The formula is continuous at a·ψ₀ (Gaussian meets plateau) and at b·ψ₀
+(plateau meets log-taper, since 25·log₁₀(b=6.32) ≈ 20 exactly).
 """
 import numpy as np
 from .base import AntennaPattern, ParamSpec
+
+_LS_TABLE: dict[float, tuple[float, float]] = {
+    -20.0: (2.58, 6.32),
+    -25.0: (2.88, 6.32),
+    -30.0: (3.16, 6.32),
+}
+
+_VALID_LS = [-20.0, -25.0, -30.0]
 
 
 def _dλ(gmax: float, eta: float = 0.6) -> float:
     return np.sqrt(10 ** (gmax / 10) / eta) / np.pi
 
 
-def _recommended_beamwidth(gmax: float) -> float:
-    """Approximate 3 dB half-beamwidth from peak gain (degrees)."""
-    dλ = _dλ(gmax)
-    return round(70.0 / dλ, 3)
-
-
 class S672Pattern(AntennaPattern):
     name = "ITU-R S.672"
-    description = "Space station reference antenna gain pattern"
+    description = "Space station reference antenna gain pattern (single-feed)"
 
     def get_params_spec(self) -> list[ParamSpec]:
         return [
-            ParamSpec('gmax', 'Peak Gain', 'float', 30.0, 0.0, 65.0, 0.5,
+            ParamSpec('gmax', 'Peak Gain', 'float', 32.3, 0.0, 65.0, 0.1,
                       units='dBi',
                       tooltip='Maximum gain at boresight'),
-            ParamSpec('phi0', '3 dB Half-Beamwidth (φ₀)', 'float', 1.5, 0.01, 90.0, 0.01,
+            ParamSpec('psi0', '3 dB Half-Beamwidth (ψ₀)', 'float', 1.0, 0.001, 90.0, 0.01,
                       units='deg',
-                      tooltip='Half-power (3 dB) beamwidth. Click Calc to derive from peak gain.',
+                      tooltip='Half-power (3 dB) half-beamwidth. '
+                              'Click Calc for an estimate from peak gain (≈ 32.5 / (D/λ)).',
                       computed=True),
-            ParamSpec('ls_choice', 'Sidelobe Plateau (Ls)', 'choice', '10 dB below peak',
-                      choices=['10 dB below peak', '20 dB below peak', 'Custom (absolute)'],
-                      tooltip='Level of the near-sidelobe plateau'),
-            ParamSpec('ls_custom', 'Custom Ls', 'float', 20.0, -40.0, 40.0, 0.5,
-                      units='dBi',
-                      tooltip='Absolute Ls value in dBi — used only when "Custom" is selected'),
+            ParamSpec('ls', 'Sidelobe Level (Ls)', 'choice', '-25 dB',
+                      choices=['-20 dB', '-25 dB', '-30 dB'],
+                      tooltip='Near-sidelobe plateau level relative to peak. '
+                              'ITU-R S.672 tabulates coefficients for −20, −25, and −30 dB only.'),
         ]
 
     def suggest_derived(self, name: str, params: dict):
-        if name == 'phi0':
-            return _recommended_beamwidth(params.get('gmax', 30.0))
+        if name == 'psi0':
+            return round(32.5 / _dλ(params.get('gmax', 30.0)), 3)
         return None
 
-    def _ls(self, params: dict) -> float:
-        choice = params.get('ls_choice', '10 dB below peak')
-        gmax = params['gmax']
-        if choice == '10 dB below peak':
-            return gmax - 10.0
-        if choice == '20 dB below peak':
-            return gmax - 20.0
-        return params.get('ls_custom', gmax - 10.0)
+    @staticmethod
+    def _ls_value(params: dict) -> float:
+        return float(params.get('ls', '-25 dB').replace(' dB', ''))
 
     def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:
-        gmax = params['gmax']
-        phi0 = max(params['phi0'], 1e-6)
-        ls = self._ls(params)
+        gm   = float(params['gmax'])
+        psi0 = max(float(params['psi0']), 1e-9)
+        ls   = self._ls_value(params)
+
+        if ls not in _LS_TABLE:
+            ls = min(_VALID_LS, key=lambda v: abs(v - ls))
+        a, b = _LS_TABLE[ls]
 
         phi = np.abs(phi)
-        G = np.full_like(phi, -10.0, dtype=float)
+        G = np.full_like(phi, 0.0, dtype=float)   # far-field floor = 0 dBi
 
-        if gmax <= ls:
-            return G
+        psi1 = b * psi0 * 10 ** (0.04 * (gm + ls))
 
-        phi_s = phi0 * np.sqrt((gmax - ls) / 12.0)
-        phi_e = 10 ** ((32.0 - ls) / 25.0)
-        phi_e = max(phi_e, phi_s)
+        r0 = phi == 0
+        r1 = (phi > 0)        & (phi <= a * psi0)
+        r2 = (phi > a * psi0) & (phi <= b * psi0)
+        r3 = (phi > b * psi0) & (phi <= psi1)
 
-        r1 = phi <= phi_s
-        r2 = (phi > phi_s) & (phi <= phi_e)
-        r3 = (phi > phi_e) & (phi <= 48.0)
-
-        G[r1] = gmax - 12.0 * (phi[r1] / phi0) ** 2
-        G[r2] = ls
+        G[r0] = gm
+        G[r1] = gm - 3.0 * (phi[r1] / psi0) ** 2
+        G[r2] = gm + ls
         with np.errstate(divide='ignore', invalid='ignore'):
-            G[r3] = 32.0 - 25.0 * np.log10(np.where(phi[r3] > 0, phi[r3], 1e-9))
+            G[r3] = gm + ls + 20.0 - 25.0 * np.log10(
+                np.where(phi[r3] > 0, phi[r3] / psi0, 1e-30)
+            )
 
         return G

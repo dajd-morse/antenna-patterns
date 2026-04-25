@@ -1,0 +1,37 @@
+Yes — I created a reusable Python script that handles **ITU-R S.1528, S.672, S.465, and S.580** in one file. The script is parameterized so you can pass different \(G_{max}\), \(L_s\), \(D/\lambda\), beamwidth, and output filename values from the command line. 
+
+## Included models
+
+The script includes:
+- **S.1528** recommend 1.3 style pattern using \(G_{max}\), \(L_s\), \(\psi_b\), and \(L_F\), where \(L_s\) is relative to peak gain. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!PDF-E.pdf)
+- **S.672** single-feed circular/elliptical Annex 1 Figure 1 envelope, using the tabulated \(a\) and \(b\) values for \(L_s = -20, -25,\) or \(-30\) dB. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!PDF-E.pdf)
+- **S.465** earth-station reference pattern using \(G = 32 - 25 \log \phi\) and the Recommendation’s \( \phi_{min} \) rules, plus the older pre-1993 option from Note 4. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!MSW-E.doc)
+- **S.580** earth-station design objective near the GSO, including the post-1995 \(29 - 25 \log \phi\) form, the older \(32 - 25 \log \phi\) case for \(50 \le D/\lambda \le 150\), and the Note 7 bridge to S.465 beyond 20 degrees. [itu](https://www.itu.int/rec/R-REC-S.1528/en)
+
+## Example usage
+
+Use it like this from a terminal:
+
+```bash
+python itu_antenna_patterns.py s1528 --gmax 32.3 --ls -15 --psi-b 1.0 --output s1528.png
+python itu_antenna_patterns.py s672  --gmax 32.3 --ls -25 --psi0 1.0 --output s672.png
+python itu_antenna_patterns.py s465  --d-over-lambda 80 --output s465.png
+python itu_antenna_patterns.py s580  --d-over-lambda 80 --output s580.png
+```
+
+For pre-1995 S.580 behavior, add `--pre-1995`, and for the older S.465 note-4 pattern, add `--legacy-pre1993`. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!MSW-E.doc)
+
+## Notes
+
+I implemented **S.672** as the single-feed Annex 1 Figure 1 envelope, not the more elaborate shaped-beam models in recommends 2.1–2.3, because those require additional geometry and scan-ratio inputs beyond a simple generic \(G_{max}\)/\(L_s\) interface. The Recommendation explicitly separates the single-feed pattern from shaped-beam models, and the shaped-beam cases use additional parameters such as \(S\), \(F/D\), and \(D/\lambda\). [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!PDF-E.pdf)
+
+I also kept **S.580** aligned with its intended scope: it applies near the GSO and then refers back to S.465 for larger off-axis angles, including the \(-3.5\) dBi bridge noted for discontinuity handling. [itu](https://www.itu.int/rec/R-REC-S.1528/en)
+
+## Practical limits
+
+A few constraints are built in:
+- **S.672** only accepts \(L_s = -20, -25,\) or \(-30\) dB, because those are the tabulated single-feed values in the Recommendation. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!PDF-E.pdf)
+- **S.580** raises an error for \(D/\lambda < 50\), because the Recommendation says further study is required there. [itu](https://www.itu.int/rec/R-REC-S.1528/en)
+- **S.465** starts at the Recommendation’s defined \( \phi_{min} \), so values below that remain undefined in the plotted array. [itu](https://www.itu.int/dms_pubrec/itu-r/rec/s/R-REC-S.1528-0-200106-I!!MSW-E.doc)
+
+Would you like me to generate a second version that adds a `compare` mode so multiple Recommendations can be overlaid on one plot?

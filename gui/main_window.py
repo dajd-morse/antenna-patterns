@@ -25,8 +25,9 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.plot_widget)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([320, 1120])
+        splitter.setSizes([340, 1100])
 
         layout.addWidget(splitter)
 
         self.input_panel.calculate_requested.connect(self.plot_widget.update_plot)
+        self.input_panel.compare_requested.connect(self.plot_widget.compare_plot)

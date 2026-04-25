@@ -1,75 +1,63 @@
 """
-ITU-R S.580 — Reference earth station antenna gain pattern (FSS).
+ITU-R S.580 — Earth station antenna design-objective pattern near the GSO.
 
-For D/λ ≥ 100:
-  G(φ) = Gmax − 2.5×10⁻³(D/λ · φ)²   0 ≤ |φ| < φm
-  G(φ) = G₁ = −1 + 15 log(D/λ)        φm ≤ |φ| ≤ φ₁
-  G(φ) = 32 − 25 log(|φ|)             φ₁ < |φ| ≤ 48°
-  G(φ) = −10 dBi                        48° < |φ|
+Takes D/λ as a direct input. Requires D/λ ≥ 50.
+Returns NaN for angles below φ_min (pattern is undefined there).
 
-For D/λ < 100:
-  Outer sidelobe → 52 − 10 log(D/λ) − 25 log(|φ|),  floor 10 − 10 log(D/λ)
+  φ_min = max(1°, 100/D·λ)
+
+Post-1995 (default):  top = 29 dBi
+Pre-1995:             top = 32 dBi  (for D/λ ≤ 150),  29 dBi (for D/λ > 150)
+
+  G(φ) = top − 25·log₁₀(φ)    φ_min ≤ φ ≤ 20°
+  G(φ) = −3.5 dBi              20° < φ ≤ 26.3°  (flat bridge)
+  G(φ) = 32 − 25·log₁₀(φ)    26.3° < φ ≤ 48°  (bridges to S.465)
+  G(φ) = −10 dBi               φ > 48°
 """
+import math
 import numpy as np
 from .base import AntennaPattern, ParamSpec
 
-
-def _dλ(gmax: float, eta: float = 0.6) -> float:
-    return np.sqrt(10 ** (gmax / 10) / eta) / np.pi
+_D_LAMBDA_MIN = 50.0
 
 
 class S580Pattern(AntennaPattern):
     name = "ITU-R S.580"
-    description = "Earth station reference antenna gain pattern (FSS)"
+    description = "Earth station antenna design-objective pattern near the GSO (FSS)"
 
     def get_params_spec(self) -> list[ParamSpec]:
         return [
-            ParamSpec('gmax', 'Peak Gain', 'float', 45.0, 0.0, 70.0, 0.5,
-                      units='dBi',
-                      tooltip='Maximum gain at boresight'),
+            ParamSpec('d_over_lambda', 'D/λ', 'float', 100.0, _D_LAMBDA_MIN, 10000.0, 1.0,
+                      tooltip=f'Antenna diameter / wavelength. Must be ≥ {_D_LAMBDA_MIN:.0f}.'),
+            ParamSpec('era', 'Standard Version', 'choice', 'Post-1995',
+                      choices=['Post-1995', 'Pre-1995'],
+                      tooltip='Post-1995: uses 29−25log(φ); '
+                              'Pre-1995: uses 32−25log(φ) for D/λ ≤ 150, else 29−25log(φ)'),
         ]
 
     def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:
-        gmax = params['gmax']
-        dλ = _dλ(gmax)
+        dλ        = float(params['d_over_lambda'])
+        post_1995 = params.get('era', 'Post-1995') == 'Post-1995'
+
+        if dλ < _D_LAMBDA_MIN:
+            return np.full_like(phi, np.nan, dtype=float)
 
         phi = np.abs(phi)
-        G = np.full_like(phi, -10.0, dtype=float)
+        G = np.full_like(phi, np.nan, dtype=float)
 
-        if dλ >= 100:
-            g1 = -1.0 + 15.0 * np.log10(dλ)
-            if gmax <= g1:
-                g1 = gmax - 1.0
-            phi_m = (20.0 / dλ) * np.sqrt(gmax - g1)
-            # φ₁: where G₁ plateau meets 32−25log rolloff
-            phi_1 = max(100.0 / dλ, 10 ** ((32.0 - g1) / 25.0))
+        phi_min = max(1.0, 100.0 / dλ)
+        top = 29.0 if post_1995 else (32.0 if dλ <= 150.0 else 29.0)
 
-            r1 = phi <= phi_m
-            r2 = (phi > phi_m) & (phi <= phi_1)
-            r3 = (phi > phi_1) & (phi <= 48.0)
+        m1 = (phi >= phi_min) & (phi <= 20.0)
+        m2 = (phi > 20.0)     & (phi <= 26.3)
+        m3 = (phi > 26.3)     & (phi <= 48.0)
+        m4 =  phi > 48.0
 
-            G[r1] = gmax - 2.5e-3 * (dλ * phi[r1]) ** 2
-            G[r2] = g1
-            with np.errstate(divide='ignore', invalid='ignore'):
-                G[r3] = 32.0 - 25.0 * np.log10(np.where(phi[r3] > 0, phi[r3], 1e-9))
-        else:
-            outer_sl = 52.0 - 10.0 * np.log10(dλ)
-            outer_floor = 10.0 - 10.0 * np.log10(dλ)
-            g1 = outer_sl
-            if gmax <= g1:
-                g1 = gmax - 1.0
-            phi_m = (20.0 / dλ) * np.sqrt(gmax - g1)
-            phi_1 = max(100.0 / dλ, 10 ** ((outer_sl - g1) / 25.0))
-
-            r1 = phi <= phi_m
-            r2 = (phi > phi_m) & (phi <= phi_1)
-            r3 = (phi > phi_1) & (phi <= 48.0)
-            r4 = phi > 48.0
-
-            G[r1] = gmax - 2.5e-3 * (dλ * phi[r1]) ** 2
-            G[r2] = g1
-            with np.errstate(divide='ignore', invalid='ignore'):
-                G[r3] = outer_sl - 25.0 * np.log10(np.where(phi[r3] > 0, phi[r3], 1e-9))
-            G[r4] = outer_floor
+        with np.errstate(divide='ignore', invalid='ignore'):
+            G[m1] = top - 25.0 * np.log10(np.where(phi[m1] > 0, phi[m1], 1e-30))
+        G[m2] = -3.5
+        with np.errstate(divide='ignore', invalid='ignore'):
+            G[m3] = 32.0 - 25.0 * np.log10(np.where(phi[m3] > 0, phi[m3], 1e-30))
+        G[m4] = -10.0
 
         return G
