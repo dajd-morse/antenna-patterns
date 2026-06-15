@@ -35,6 +35,23 @@ class AntennaPattern(ABC):
     def get_default_params(self) -> dict:
         return {p.name: p.default for p in self.get_params_spec()}
 
+    def reference_peak(self, params: dict) -> Optional[float]:
+        """Reference peak gain (dBi) for "dB below peak" contours, or None.
+
+        Return None when the pattern has no meaningful main-lobe peak parameter
+        (e.g. earth-station envelopes whose peak is the curve maximum). The
+        plot widget then falls back to the maximum finite gain of the curve.
+        """
+        return None
+
     def suggest_derived(self, name: str, params: dict) -> Optional[float]:
         """Return a suggested value for a 'computed' parameter, or None."""
         return None
+
+    def is_param_applicable(self, name: str, params: dict) -> bool:
+        """Return whether a parameter is active for the current selection."""
+        return True
+
+    def param_warning(self, name: str, params: dict) -> str:
+        """Return a user-facing warning for a parameter, or an empty string."""
+        return ""
