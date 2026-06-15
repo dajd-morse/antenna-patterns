@@ -193,6 +193,24 @@ class PatternFormulaTests(unittest.TestCase):
         self.assertTrue(pattern.param_warning('gmax', {'gmax': 20.0, 'ln': '-25 dB'}))
         self.assertFalse(pattern.param_warning('gmax', {'gmax': 40.0, 'ln': '-25 dB'}))
 
+    def test_s1528_section_13_warns_on_gm_dlambda_discontinuity(self):
+        # Per S.1528 1.3, LEO/MEO masks are continuous at Y only when
+        # Gm ~ 20 log10(D/lambda) + 8. A consistent pair must not warn; a
+        # wildly inconsistent pair must.
+        pattern = S1528Pattern()
+        d = 100.0
+        gm_consistent = 20.0 * math.log10(d) + 8.0  # ~48 dBi
+        self.assertFalse(pattern.param_warning('gmax', {
+            'model': '1.3 LEO', 'gmax': gm_consistent, 'd_over_lambda': d,
+        }))
+        self.assertTrue(pattern.param_warning('gmax', {
+            'model': '1.3 LEO', 'gmax': gm_consistent - 10.0, 'd_over_lambda': d,
+        }))
+        # MEO uses the same continuity relationship.
+        self.assertFalse(pattern.param_warning('d_over_lambda', {
+            'model': '1.3 MEO', 'gmax': gm_consistent, 'd_over_lambda': d,
+        }))
+
     def test_reference_peak_per_pattern(self):
         # Space patterns report Gmax; earth-station envelopes report None so the
         # plot widget falls back to the actual curve maximum.

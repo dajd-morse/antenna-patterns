@@ -119,7 +119,32 @@ class S1528Pattern(AntennaPattern):
                         'shelf Gm+LN ({:.1f} dBi); the envelope rises off-axis.'
                         .format(lf, gm + ln))
 
+        # In S.1528 1.3 the LEO/MEO sidelobe floor is set by 20 log10(D/lambda)
+        # while the main lobe uses Gm. The mask is continuous at Y only when
+        # Gm ~ 20 log10(D/lambda) + 8; flag a large step so the user can check
+        # whether their Gm and D/lambda are consistent.
+        if name in {'gmax', 'd_over_lambda'} and model in (_SECTION_13_LEO, _SECTION_13_MEO):
+            gap = self._section_13_edge_step(params, model)
+            if abs(gap) > 2.0:
+                return ('Gm and D/lambda imply a {:+.1f} dB step at the main-lobe '
+                        'edge (mask is continuous when Gm ~ 20 log10(D/lambda) + 8). '
+                        'Expected for scanned beams, but verify if unintended.'
+                        .format(gap))
+
         return ''
+
+    @staticmethod
+    def _section_13_edge_step(params: dict, model: str) -> float:
+        """Main-lobe(Y) minus sidelobe(Y) for the 1.3 LEO/MEO masks (dB)."""
+        gm = float(params.get('gmax', 0.0))
+        d = max(float(params.get('d_over_lambda', 35.0)), 1e-9)
+        if model == _SECTION_13_LEO:  # Ls = -6.75, Y = 1.5 psi_b
+            main_at_y = gm - 6.75
+            side_at_y = 20.0 * math.log10(d) + 5.65 - 25.0 * math.log10(1.5)
+        else:                          # MEO: Ls = -12, Y = 2 psi_b
+            main_at_y = gm - 12.0
+            side_at_y = 20.0 * math.log10(d) + 3.5 - 25.0 * math.log10(2.0)
+        return main_at_y - side_at_y
 
     @staticmethod
     def _level_value(params: dict, key: str, default: str) -> float:

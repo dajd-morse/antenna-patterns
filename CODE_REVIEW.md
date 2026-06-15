@@ -213,35 +213,37 @@ document why it's kept.
 
 ---
 
-## 🔬 Verify against ITU-R text (not necessarily bugs)
+## 🔬 Verified against ITU-R text — all four CONFIRMED CORRECT
 
-These match a plausible reading of the standards but I could not confirm the
-exact coefficients/boundaries from the source documents. Worth a second pass with
-the recommendation PDFs open.
+Resolved on 2026-06-15 against the recommendation PDFs in `antenna-specs/`
+(S.1528-0, S.672-4, S.580-6, S.465-6). No formula changes were required; one
+optional consistency warning was added (V3).
 
-### V1. S.1528 §1.2 inner shelf is *higher* than the outer shelf for `z > 1`
-`patterns/s1528.py:161-162` — region `(a·psi_b, 0.5·b·psi_b]` is
-`Gm + LN + 20·log10(z)` while `(0.5·b·psi_b, b·psi_b]` is `Gm + LN`. For `z > 1`
-the inner sidelobe sits *above* the near shelf. Confirm the `+20·log10(z)` sign
-and that it applies to the inner segment.
+### V1. S.1528 §1.2 inner shelf `+20·log10(z)` — ✅ correct
+S.1528-0, recommends 1.2, eq (2a)/(2b): `G = Gm + LN + 20 log(z)` for
+`aψb < ψ ≤ 0.5bψb`, then `G = Gm + LN` for `0.5bψb < ψ ≤ bψb`. The inner shelf
+*is* meant to be higher by `20 log z` for `z > 1`. Code matches exactly.
 
-### V2. Major-axis `psi_b` multiplies by `z`
-`patterns/s1528.py:30-32` — `_psi_b_from_d_lambda` does `psi_b *= max(z,1.0)` for
-the major axis. Confirm whether the elliptical relationship multiplies or divides
-by the axis ratio for the plane in question.
+### V2. Major-axis `psi_b` multiplies by `z` — ✅ correct
+S.1528-0 defines `ψb = (major/minor)·√1200/(D/λ)` for the major axis — i.e.
+multiply by `z = major/minor`. `_psi_b_from_d_lambda` multiplies. Correct.
 
-### V3. S.1528 §1.3 mixes `Gm` (main lobe) with `D/lambda`-absolute sidelobe levels
-`patterns/s1528.py:177-203` — the main lobe uses `Gm`, but the LEO/MEO sidelobe
-region uses `20·log10(D/lambda) + 5.65/3.5`. If the user's `Gmax` and `D/lambda`
-are inconsistent, there is a discontinuity at `Y`. This is inherent to the
-standard's formulation, but the UI should probably warn when `Gmax` and the
-`D/lambda`-implied gain disagree by more than a few dB.
+### V3. S.1528 §1.3 mixes `Gm` with `D/lambda`-absolute sidelobe levels — ✅ correct, warning added
+S.1528-0 §1.3 LEO/MEO use sidelobe `20 log(D/λ) + 5.65` (LEO) / `+ 3.5` (MEO) and
+main lobe `Gm − 3(ψ/ψb)²`, with `Z = Y·10^0.04(Gm+Ls−LF)`. All faithful to the
+text. The masks are continuous at `Y` only when `Gm ≈ 20 log(D/λ) + 8` (verified
+algebraically for both `Y = 1.5ψb` and `Y = 2ψb`). A discontinuity is spec-allowed
+(scanned-beam sidelobe floors are set by aperture, not the scanned peak), so the
+tool now emits an informational warning when the implied step exceeds 2 dB rather
+than altering the formula. See `S1528Pattern._section_13_edge_step`.
 
-### V4. S.580-6 segment boundaries (`20°`, `26.3°`, `48°`) and the `-3.5 dBi` plateau
-`patterns/s580.py:60-69` — the segmentation looks self-consistent (the pieces are
-roughly continuous), but confirm the `26.3°` switch point and that the
-`32 − 25·log10(phi)` (S.465) borrow over `26.3–48°` is the intended current
-S.580-6 envelope rather than a flat floor.
+### V4. S.580-6 segment boundaries — ✅ correct
+S.580-6 recommends 1 (`29 − 25 log φ`, `φmin..20°`) + Note 5 (`−3.5 dBi`,
+`20° < φ ≤ 26.3°`) + recommends 2 → S.465 (`32 − 25 log φ` to 48°, then `−10`).
+At 20°: `29 − 25 log 20 = −3.5`; at 26.3°: `32 − 25 log 26.3 = −3.5`. Both
+segment joins land on the −3.5 dBi plateau. Code matches exactly. S.465-6 and
+S.672-4 recommends 1 were also confirmed (φmin rules / 48° break; `α=2`,
+`a`-table, `LB`).
 
 ---
 
@@ -254,3 +256,7 @@ S.580-6 envelope rather than a flat floor.
 5. **Unify compare mode with the single-pattern path** (M3) and **add error handling** (M4).
 6. **Expand tests** to §1.3, contour edge cases, and the malformed-envelope inputs (M6).
 7. Clean up scratch dirs (L1) and verify the ITU coefficient items (V1–V4) against source.
+
+> **Status (2026-06-15):** All items H1–H3, M1–M6, L1–L5 implemented on branch
+> `code-review-fixes`. V1–V4 verified against the spec PDFs in `antenna-specs/` —
+> all formulas correct; an optional S.1528 §1.3 continuity warning was added.
