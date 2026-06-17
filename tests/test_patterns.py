@@ -144,6 +144,23 @@ class PatternFormulaTests(unittest.TestCase):
 
         self.assertAlmostEqual(first_descent(phi, gain, 10.0), 1.0)
 
+    def test_all_patterns_agree_on_estimated_d_lambda(self):
+        # Regression: S.580's D/lambda spinbox min was 50, silently clamping the
+        # estimate (16.935 for 32.3 dBi) up to 50. The estimate itself must match
+        # the other patterns, and the spinbox min must not exceed it.
+        params = {'gmax': 32.3, 'aperture_efficiency': 0.60}
+        values = []
+        for pattern in (S1528Pattern(), S672Pattern(), S465Pattern(), S580Pattern()):
+            values.append(pattern.suggest_derived('d_over_lambda', params))
+            spec = next(s for s in pattern.get_params_spec() if s.name == 'd_over_lambda')
+            self.assertLessEqual(spec.min, values[-1])
+        self.assertEqual(len(set(values)), 1)  # all identical
+
+    def test_s580_flags_below_domain_d_lambda(self):
+        pattern = S580Pattern()
+        self.assertTrue(pattern.param_warning('d_over_lambda', {'d_over_lambda': 16.935}))
+        self.assertFalse(pattern.param_warning('d_over_lambda', {'d_over_lambda': 100.0}))
+
     def test_station_type_classifies_earth_vs_space_patterns(self):
         # Drives the dropdown label and gates the "dB below peak" contour table:
         # earth-station sidelobe envelopes (S.465/S.580) have no modelled peak.

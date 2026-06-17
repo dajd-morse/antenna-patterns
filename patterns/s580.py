@@ -25,8 +25,12 @@ class S580Pattern(AntennaPattern):
                       tooltip='Used only for estimating D/lambda from peak gain'),
             ParamSpec('aperture_efficiency', 'Aperture Efficiency', 'float', 0.60, 0.05, 1.00, 0.01,
                       tooltip='Used only for estimating D/lambda from peak gain'),
-            ParamSpec('d_over_lambda', 'D/lambda', 'float', 100.0, _D_LAMBDA_MIN, 10000.0, 1.0,
-                      tooltip='Antenna diameter divided by wavelength; S.580-6 applies for D/lambda >= 50',
+            # Spinbox minimum is 1, not _D_LAMBDA_MIN: a small antenna's estimated
+            # D/lambda (e.g. ~17 for 32.3 dBi) must display honestly rather than
+            # being silently clamped up to 50. Values < 50 are flagged as
+            # out-of-domain by param_warning() and yield an empty (NaN) curve.
+            ParamSpec('d_over_lambda', 'D/lambda', 'float', 100.0, 1.0, 10000.0, 1.0,
+                      tooltip='Antenna diameter divided by wavelength; S.580-6 applies only for D/lambda >= 50',
                       computed=True),
         ]
 
