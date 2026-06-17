@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QGroupBox,
     QLabel, QDoubleSpinBox, QPushButton, QCheckBox,
-    QFileDialog, QHeaderView, QAbstractItemView,
+    QFileDialog, QHeaderView, QAbstractItemView, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -17,6 +17,7 @@ from patterns.s672  import S672Pattern
 from patterns.s465  import S465Pattern
 from patterns.s580  import S580Pattern
 from utils.geometry import nadir_angle_from_elevation
+from utils.contours import first_descent
 
 DB_LEVELS = [2, 4, 6, 8, 10, 15, 20]
 
@@ -32,8 +33,6 @@ _COMPARE_COLORS = {
     'S.672':  '#d62728',
     'S.465':  '#2ca02c',
     'S.580':  '#ff7f0e',
-    'S.465 legacy': '#8c564b',
-    'S.580 pre-1995': '#9467bd',
 }
 
 
@@ -151,61 +150,85 @@ class PlotWidget(QWidget):
         scan_min  = common_params['scan_min']
         scan_max  = common_params['scan_max']
         orbit_alt = common_params['orbit_alt']
-        elev_angle = common_params['elev_angle']
+        min_elev_angle = common_params['min_elev_angle']
 
         phi = np.linspace(scan_min, scan_max, 20_000)
-        G   = pattern.gain(phi, pattern_params)
+        try:
+            G = pattern.gain(phi, pattern_params)
+        except Exception as exc:  # surface bad params instead of a raw traceback
+            QMessageBox.critical(self, "Plot error",
+                                 f"Could not evaluate {pattern.name}:\n{exc}")
+            return
 
-        # Peak gain: use explicit param if present, else max finite value
-        if 'gmax' in pattern_params:
-            gmax = float(pattern_params['gmax'])
-        else:
-            gmax = float(np.nanmax(G)) if np.any(np.isfinite(G)) else 0.0
+        # Earth-station patterns (S.465/S.580) are sidelobe envelopes with no
+        # modelled main lobe, so "dB below peak" contours are not meaningful.
+        peak_referenced = getattr(pattern, 'station_type', 'space') != 'earth'
+
+        # Reference peak for "dB below peak" contours: the pattern decides, else
+        # fall back to the maximum finite gain of the actual curve (y-axis only).
+        ref_peak = pattern.reference_peak(pattern_params)
+        if ref_peak is None:
+            ref_peak = float(np.nanmax(G)) if np.any(np.isfinite(G)) else 0.0
+        gmax = float(ref_peak)
+
+        # Data-driven y-range so low sidelobes/back-lobes are not silently clipped
+        finite = G[np.isfinite(G)]
+        ymin = min(-20.0, float(np.nanmin(finite)) - 3.0) if finite.size else -20.0
+        ymax = round(gmax + 5.0, 1)
 
         # Sync axis range spinners
         self._xmin_spin.setValue(scan_min)
         self._xmax_spin.setValue(scan_max)
-        self._ymin_spin.setValue(-20.0)
-        self._ymax_spin.setValue(round(gmax + 5.0, 1))
+        self._ymin_spin.setValue(round(ymin, 1))
+        self._ymax_spin.setValue(ymax)
 
         self._ax.clear()
         self._ax.plot(phi, G, color='steelblue', linewidth=1.5, label=pattern.name)
-        self._ax.axhline(y=gmax, color='gray', linewidth=0.6,
-                         linestyle='--', alpha=0.5)
+        if peak_referenced:
+            self._ax.axhline(y=gmax, color='gray', linewidth=0.6,
+                             linestyle='--', alpha=0.5)
 
         # Contour lines and table
         phi_pos = phi[phi >= 0]
         G_pos   = G[phi >= 0]
         show_contours = self._show_contours_cb.isChecked()
-        theta_nadir   = nadir_angle_from_elevation(elev_angle, orbit_alt)
+        theta_nadir   = nadir_angle_from_elevation(min_elev_angle, orbit_alt)
         mf = QFont("Courier New", 9)
 
         self._contour_lines.clear()
-        for row, (db, color) in enumerate(zip(DB_LEVELS, _CONTOUR_COLORS)):
-            angle = _first_descent(phi_pos, G_pos, gmax - db)
-            if angle is not None:
-                # Always draw; visibility controlled by checkbox
-                l1 = self._ax.axvline(x= angle, color=color, linewidth=0.8,
-                                      linestyle=':', alpha=0.7,
-                                      visible=show_contours)
-                l2 = self._ax.axvline(x=-angle, color=color, linewidth=0.8,
-                                      linestyle=':', alpha=0.7,
-                                      visible=show_contours)
-                self._contour_lines.extend([l1, l2])
-                nadir_scan = theta_nadir + angle
-                self._table.setItem(row, 1, _cell(f"{angle:.3f}", mf))
-                self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", mf))
-                self._table.setItem(row, 3, _cell("", mf))
-            else:
-                self._table.setItem(row, 1, _cell("N/A", mf))
-                self._table.setItem(row, 2, _cell("N/A", mf))
-                self._table.setItem(row, 3, _cell("beyond scan range / floor", mf))
+        # For earth-station envelopes, suppress the lines and table values
+        # rather than show misleading "dB below peak" numbers (see above).
+        if not peak_referenced:
+            for row in range(len(DB_LEVELS)):
+                self._table.setItem(row, 1, _cell("—", mf))
+                self._table.setItem(row, 2, _cell("—", mf))
+                self._table.setItem(row, 3, _cell("N/A for earth-station envelope", mf))
+        else:
+            for row, (db, color) in enumerate(zip(DB_LEVELS, _CONTOUR_COLORS)):
+                angle = first_descent(phi_pos, G_pos, gmax - db)
+                if angle is not None:
+                    # Always draw; visibility controlled by checkbox
+                    l1 = self._ax.axvline(x= angle, color=color, linewidth=0.8,
+                                          linestyle=':', alpha=0.7,
+                                          visible=show_contours)
+                    l2 = self._ax.axvline(x=-angle, color=color, linewidth=0.8,
+                                          linestyle=':', alpha=0.7,
+                                          visible=show_contours)
+                    self._contour_lines.extend([l1, l2])
+                    nadir_scan = theta_nadir + angle
+                    self._table.setItem(row, 1, _cell(f"{angle:.3f}", mf))
+                    self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", mf))
+                    self._table.setItem(row, 3, _cell(f"base scan {theta_nadir:.3f}", mf))
+                else:
+                    self._table.setItem(row, 1, _cell("N/A", mf))
+                    self._table.setItem(row, 2, _cell("N/A", mf))
+                    self._table.setItem(row, 3, _cell("beyond scan range / floor", mf))
 
         self._ax.set_xlabel("Angle from Boresight (degrees)")
         self._ax.set_ylabel("Gain (dBi)")
         self._ax.set_title(f"{pattern.name} — Antenna Gain Pattern")
         self._ax.set_xlim(scan_min, scan_max)
-        self._ax.set_ylim(-20.0, gmax + 5.0)
+        self._ax.set_ylim(ymin, ymax)
         self._ax.grid(True, alpha=0.3)
         self._ax.legend(loc='upper right', fontsize=9)
         self._canvas.draw()
@@ -213,70 +236,59 @@ class PlotWidget(QWidget):
     # --------------------------------------------------------- compare mode
 
     def compare_plot(self, compare_params: dict, common_params: dict):
-        scan_min  = common_params['scan_min']
-        scan_max  = common_params['scan_max']
-        orbit_alt = common_params['orbit_alt']
-        elev_angle = common_params['elev_angle']
+        scan_min = common_params['scan_min']
+        scan_max = common_params['scan_max']
 
-        gmax    = compare_params['gmax']
-        ls      = compare_params['ls']
-        psi_b   = compare_params['psi_b']
-        psi0    = compare_params['psi0']
-        dλ      = compare_params['d_over_lambda']
-        legacy  = compare_params['include_legacy']
+        gmax = compare_params['gmax']
+        ln = compare_params['ln']
+        psi_b = compare_params['psi_b']
+        z = compare_params['z']
+        d_lambda = compare_params['d_over_lambda']
 
         phi = np.linspace(scan_min, scan_max, 20_000)
 
+        # Build each pattern's params from its own defaults, then overlay the
+        # shared compare inputs. Starting from get_default_params() keeps the
+        # compare path from drifting if a pattern adds or renames a parameter.
+        ln672 = min([-20.0, -25.0], key=lambda value: abs(value - ln))
+        plan = [
+            (S1528Pattern(),
+             {'model': '1.2 multiple-beam envelope', 'gmax': gmax,
+              'd_over_lambda': d_lambda, 'z': z, 'psi_b': psi_b,
+              'ln': f'{ln:g} dB'},
+             f"S.1528  Gm={gmax:g} dBi, LN={ln:g} dB"),
+            (S672Pattern(),
+             {'gmax': gmax, 'psi_b': psi_b, 'z': z, 'ln': f'{ln672:g} dB'},
+             f"S.672   Gm={gmax:g} dBi, LN={ln672:g} dB"
+             + (f"  (snapped from {ln:g})" if ln672 != ln else "")),
+            (S465Pattern(),
+             {'d_over_lambda': d_lambda},
+             f"S.465   D/lambda={d_lambda:g}"),
+            (S580Pattern(),
+             {'d_over_lambda': d_lambda},
+             f"S.580   D/lambda={d_lambda:g}"),
+        ]
+
         curves: list[tuple[str, np.ndarray]] = []
-
-        # S.1528
-        p1528 = S1528Pattern()
-        G1528 = p1528.gain(phi, {'gmax': gmax, 'psi_b': psi_b, 'ls': ls,
-                                  'lf': 0.0, 'mode': 'Transmit'})
-        curves.append((f"S.1528  Gm={gmax} dBi, Ls={ls:g} dB", G1528))
-
-        # S.672 — Ls must be -20, -25, or -30
-        valid_ls = [-20.0, -25.0, -30.0]
-        ls672 = min(valid_ls, key=lambda v: abs(v - ls))
-        ls672_str = f"{ls672:g} dB"
-        p672 = S672Pattern()
-        G672 = p672.gain(phi, {'gmax': gmax, 'psi0': psi0,
-                                'ls': f"{ls672:g} dB"})
-        label672 = f"S.672   Gm={gmax} dBi, Ls={ls672:g} dB"
-        if ls672 != ls:
-            label672 += f"  (snapped from {ls:g})"
-        curves.append((label672, G672))
-
-        # S.465 modern
-        p465 = S465Pattern()
-        G465 = p465.gain(phi, {'d_over_lambda': dλ, 'era': 'Post-1993 (modern)'})
-        curves.append((f"S.465   D/λ={dλ:g}", G465))
-
-        # S.580 post-1995
-        p580 = S580Pattern()
-        G580 = p580.gain(phi, {'d_over_lambda': dλ, 'era': 'Post-1995'})
-        curves.append((f"S.580   D/λ={dλ:g}", G580))
-
-        if legacy:
-            G465_leg = p465.gain(phi, {'d_over_lambda': dλ,
-                                       'era': 'Pre-1993 (legacy Note 4)'})
-            curves.append((f"S.465 legacy  D/λ={dλ:g}", G465_leg))
-            G580_pre = p580.gain(phi, {'d_over_lambda': dλ, 'era': 'Pre-1995'})
-            curves.append((f"S.580 pre-1995  D/λ={dλ:g}", G580_pre))
+        try:
+            for pattern, overrides, label in plan:
+                params = pattern.get_default_params()
+                params.update(overrides)
+                curves.append((label, pattern.gain(phi, params)))
+        except Exception as exc:
+            QMessageBox.critical(self, "Comparison error",
+                                 f"Could not evaluate comparison:\n{exc}")
+            return
 
         self._contour_lines.clear()
-
-        # Plot
         self._ax.clear()
         default_colors = list(_COMPARE_COLORS.values())
         for i, (label, G) in enumerate(curves):
             color = default_colors[i % len(default_colors)]
             self._ax.plot(phi, G, linewidth=1.5, color=color, label=label)
 
-        # Axis limits: use gmax + 5 top, finite min − 3 bottom
-        all_finite = np.concatenate([
-            G[np.isfinite(G)] for _, G in curves if np.any(np.isfinite(G))
-        ])
+        finite_arrays = [G[np.isfinite(G)] for _, G in curves if np.any(np.isfinite(G))]
+        all_finite = np.concatenate(finite_arrays) if finite_arrays else np.array([])
         ymin = float(np.nanmin(all_finite)) - 3.0 if all_finite.size else -20.0
         ymax = gmax + 5.0
 
@@ -289,16 +301,15 @@ class PlotWidget(QWidget):
         self._ax.set_ylim(ymin, ymax)
         self._ax.set_xlabel("Angle from Boresight (degrees)")
         self._ax.set_ylabel("Gain (dBi)")
-        self._ax.set_title("ITU-R Antenna Pattern Comparison")
+        self._ax.set_title("Current ITU-R Antenna Pattern Comparison")
         self._ax.grid(True, alpha=0.3)
         self._ax.legend(loc='upper right', fontsize=8)
         self._canvas.draw()
 
-        # Clear the contour table — not meaningful for multi-pattern view
         mf = QFont("Courier New", 9)
         for row in range(len(DB_LEVELS)):
-            self._table.setItem(row, 1, _cell("—", mf))
-            self._table.setItem(row, 2, _cell("—", mf))
+            self._table.setItem(row, 1, _cell("-", mf))
+            self._table.setItem(row, 2, _cell("-", mf))
             self._table.setItem(row, 3, _cell("compare mode", mf))
 
     # --------------------------------------------------------------- contours
@@ -322,26 +333,18 @@ class PlotWidget(QWidget):
             self, "Save Antenna Pattern Plot", "antenna_pattern.png",
             "PNG Images (*.png);;All Files (*)"
         )
-        if path:
+        if not path:
+            return
+        if not path.lower().endswith('.png'):
+            path += '.png'
+        try:
             self._figure.savefig(path, dpi=150, bbox_inches='tight')
+        except Exception as exc:
+            QMessageBox.critical(self, "Save error",
+                                 f"Could not save image:\n{exc}")
 
 
 # ------------------------------------------------------------------ utilities
-
-def _first_descent(phi: np.ndarray, G: np.ndarray, target: float) -> float | None:
-    """
-    Return the first angle where G descends through target (linear interpolation).
-    NaN values are skipped — they do not trigger a crossing.
-    """
-    for i in range(len(G) - 1):
-        g0, g1 = G[i], G[i + 1]
-        if np.isnan(g0) or np.isnan(g1):
-            continue
-        if g0 >= target > g1:
-            t = (target - g0) / (g1 - g0)
-            return float(phi[i] + t * (phi[i + 1] - phi[i]))
-    return None
-
 
 def _cell(text: str, font: QFont) -> QTableWidgetItem:
     item = QTableWidgetItem(text)

@@ -1,63 +1,71 @@
 """
-ITU-R S.580 — Earth station antenna design-objective pattern near the GSO.
+ITU-R S.580-6 earth-station antenna design objective near the GSO.
 
-Takes D/λ as a direct input. Requires D/λ ≥ 50.
-Returns NaN for angles below φ_min (pattern is undefined there).
-
-  φ_min = max(1°, 100/D·λ)
-
-Post-1995 (default):  top = 29 dBi
-Pre-1995:             top = 32 dBi  (for D/λ ≤ 150),  29 dBi (for D/λ > 150)
-
-  G(φ) = top − 25·log₁₀(φ)    φ_min ≤ φ ≤ 20°
-  G(φ) = −3.5 dBi              20° < φ ≤ 26.3°  (flat bridge)
-  G(φ) = 32 − 25·log₁₀(φ)    26.3° < φ ≤ 48°  (bridges to S.465)
-  G(φ) = −10 dBi               φ > 48°
+Implements the current in-force S.580-6 objective only. Historical objectives
+from superseded revisions are intentionally not exposed.
 """
-import math
 import numpy as np
+
 from .base import AntennaPattern, ParamSpec
+from utils.aperture import d_lambda_from_gmax
+
 
 _D_LAMBDA_MIN = 50.0
 
 
 class S580Pattern(AntennaPattern):
     name = "ITU-R S.580"
-    description = "Earth station antenna design-objective pattern near the GSO (FSS)"
+    station_type = "earth"
+    description = "Earth-station design-objective pattern near the GSO"
 
     def get_params_spec(self) -> list[ParamSpec]:
         return [
-            ParamSpec('d_over_lambda', 'D/λ', 'float', 100.0, _D_LAMBDA_MIN, 10000.0, 1.0,
-                      tooltip=f'Antenna diameter / wavelength. Must be ≥ {_D_LAMBDA_MIN:.0f}.'),
-            ParamSpec('era', 'Standard Version', 'choice', 'Post-1995',
-                      choices=['Post-1995', 'Pre-1995'],
-                      tooltip='Post-1995: uses 29−25log(φ); '
-                              'Pre-1995: uses 32−25log(φ) for D/λ ≤ 150, else 29−25log(φ)'),
+            ParamSpec('gmax', 'Peak Gain Estimate', 'float', 32.3, 0.0, 65.0, 0.1,
+                      units='dBi',
+                      tooltip='Used only for estimating D/lambda from peak gain'),
+            ParamSpec('aperture_efficiency', 'Aperture Efficiency', 'float', 0.60, 0.05, 1.00, 0.01,
+                      tooltip='Used only for estimating D/lambda from peak gain'),
+            # Spinbox minimum is 1, not _D_LAMBDA_MIN: a small antenna's estimated
+            # D/lambda (e.g. ~17 for 32.3 dBi) must display honestly rather than
+            # being silently clamped up to 50. Values < 50 are flagged as
+            # out-of-domain by param_warning() and yield an empty (NaN) curve.
+            ParamSpec('d_over_lambda', 'D/lambda', 'float', 100.0, 1.0, 10000.0, 1.0,
+                      tooltip='Antenna diameter divided by wavelength; S.580-6 applies only for D/lambda >= 50',
+                      computed=True),
         ]
 
-    def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:
-        dλ        = float(params['d_over_lambda'])
-        post_1995 = params.get('era', 'Post-1995') == 'Post-1995'
+    def suggest_derived(self, name: str, params: dict):
+        if name == 'd_over_lambda':
+            return round(d_lambda_from_gmax(
+                float(params.get('gmax', 30.0)),
+                float(params.get('aperture_efficiency', 0.60)),
+            ), 3)
+        return None
 
-        if dλ < _D_LAMBDA_MIN:
+    def param_warning(self, name: str, params: dict) -> str:
+        if name == 'd_over_lambda' and float(params.get('d_over_lambda', 100.0)) < _D_LAMBDA_MIN:
+            return 'S.580-6 applies only for D/lambda >= 50.'
+        return ''
+
+    def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:
+        d_over_lambda = float(params['d_over_lambda'])
+        if d_over_lambda < _D_LAMBDA_MIN:
             return np.full_like(phi, np.nan, dtype=float)
 
-        phi = np.abs(phi)
-        G = np.full_like(phi, np.nan, dtype=float)
+        phi_abs = np.abs(phi)
+        G = np.full_like(phi_abs, np.nan, dtype=float)
 
-        phi_min = max(1.0, 100.0 / dλ)
-        top = 29.0 if post_1995 else (32.0 if dλ <= 150.0 else 29.0)
+        phi_min = max(1.0, 100.0 / d_over_lambda)
 
-        m1 = (phi >= phi_min) & (phi <= 20.0)
-        m2 = (phi > 20.0)     & (phi <= 26.3)
-        m3 = (phi > 26.3)     & (phi <= 48.0)
-        m4 =  phi > 48.0
+        m1 = (phi_abs >= phi_min) & (phi_abs <= 20.0)
+        m2 = (phi_abs > 20.0) & (phi_abs <= 26.3)
+        m3 = (phi_abs > 26.3) & (phi_abs < 48.0)
+        m4 = (phi_abs >= 48.0) & (phi_abs <= 180.0)
 
         with np.errstate(divide='ignore', invalid='ignore'):
-            G[m1] = top - 25.0 * np.log10(np.where(phi[m1] > 0, phi[m1], 1e-30))
+            G[m1] = 29.0 - 25.0 * np.log10(phi_abs[m1])
+            G[m3] = 32.0 - 25.0 * np.log10(phi_abs[m3])
         G[m2] = -3.5
-        with np.errstate(divide='ignore', invalid='ignore'):
-            G[m3] = 32.0 - 25.0 * np.log10(np.where(phi[m3] > 0, phi[m3], 1e-30))
         G[m4] = -10.0
 
         return G
