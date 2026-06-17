@@ -22,6 +22,10 @@ class ParamSpec:
 class AntennaPattern(ABC):
     name: str = ""
     description: str = ""
+    # 'space' main-lobe patterns have a meaningful peak gain, so "dB below peak"
+    # contours apply. 'earth' patterns are sidelobe envelopes with no modelled
+    # main lobe, so those contours are not meaningful.
+    station_type: str = "space"
 
     @abstractmethod
     def gain(self, phi: np.ndarray, params: dict) -> np.ndarray:

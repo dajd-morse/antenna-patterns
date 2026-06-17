@@ -12,6 +12,7 @@ from utils.aperture import d_lambda_from_gmax
 
 class S465Pattern(AntennaPattern):
     name = "ITU-R S.465"
+    station_type = "earth"
     description = "Reference earth-station gain pattern for FSS coordination"
 
     def get_params_spec(self) -> list[ParamSpec]:

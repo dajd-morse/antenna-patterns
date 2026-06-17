@@ -144,6 +144,14 @@ class PatternFormulaTests(unittest.TestCase):
 
         self.assertAlmostEqual(first_descent(phi, gain, 10.0), 1.0)
 
+    def test_station_type_classifies_earth_vs_space_patterns(self):
+        # Drives the dropdown label and gates the "dB below peak" contour table:
+        # earth-station sidelobe envelopes (S.465/S.580) have no modelled peak.
+        self.assertEqual(S1528Pattern().station_type, 'space')
+        self.assertEqual(S672Pattern().station_type, 'space')
+        self.assertEqual(S465Pattern().station_type, 'earth')
+        self.assertEqual(S580Pattern().station_type, 'earth')
+
     def test_minimum_elevation_creates_nonzero_nadir_scan_offset(self):
         self.assertAlmostEqual(nadir_angle_from_elevation(90.0, 500.0), 0.0, places=9)
         self.assertGreater(nadir_angle_from_elevation(10.0, 500.0), 0.0)

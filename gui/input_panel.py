@@ -54,7 +54,7 @@ class InputPanel(QWidget):
         form_sel = QFormLayout(grp_sel)
         self._pattern_combo = QComboBox()
         for pattern in PATTERN_REGISTRY:
-            self._pattern_combo.addItem(pattern.name)
+            self._pattern_combo.addItem(f"{pattern.name}  ({pattern.station_type} station)")
         self._pattern_combo.currentIndexChanged.connect(self._rebuild_param_group)
         form_sel.addRow("Pattern:", self._pattern_combo)
         self._main_layout.addWidget(grp_sel)

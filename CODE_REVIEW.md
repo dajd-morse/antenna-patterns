@@ -247,6 +247,25 @@ S.672-4 recommends 1 were also confirmed (φmin rules / 48° break; `α=2`,
 
 ---
 
+## Follow-up: earth-station contour reference (post-H1)
+
+While testing, S.465 with an entered peak of 32.3 dBi plotted a curve starting at
+~14 dBi, with the −2 dB contour measured relative to 14. This is **correct**:
+32.3 dBi at 60% efficiency implies `D/λ ≈ 16.9`, so `φ_min ≈ 5.22°` and the
+`32 − 25 log φ` envelope is already at 14.06 dBi there. S.465/S.580 are sidelobe
+envelopes that do not model the main beam.
+
+Because "dB below peak" is not meaningful for a sidelobe envelope, the tool now:
+- tags S.465/S.580 as **earth station** (vs **space station** for S.1528/S.672)
+  in the pattern dropdown, via `AntennaPattern.station_type`;
+- **suppresses the dB-below-peak contour lines and table values** for
+  earth-station patterns (Notes column reads "N/A for earth-station envelope")
+  rather than showing numbers referenced to the envelope start.
+
+The curve itself is unchanged (pure ITU envelope, per the chosen option).
+
+---
+
 ## Summary of recommended actions (priority order)
 
 1. **Commit `tests/` and `utils/contours.py`** (H3) — prevent data loss.

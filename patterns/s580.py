@@ -15,6 +15,7 @@ _D_LAMBDA_MIN = 50.0
 
 class S580Pattern(AntennaPattern):
     name = "ITU-R S.580"
+    station_type = "earth"
     description = "Earth-station design-objective pattern near the GSO"
 
     def get_params_spec(self) -> list[ParamSpec]:

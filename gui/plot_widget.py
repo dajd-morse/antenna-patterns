@@ -160,8 +160,12 @@ class PlotWidget(QWidget):
                                  f"Could not evaluate {pattern.name}:\n{exc}")
             return
 
+        # Earth-station patterns (S.465/S.580) are sidelobe envelopes with no
+        # modelled main lobe, so "dB below peak" contours are not meaningful.
+        peak_referenced = getattr(pattern, 'station_type', 'space') != 'earth'
+
         # Reference peak for "dB below peak" contours: the pattern decides, else
-        # fall back to the maximum finite gain of the actual curve.
+        # fall back to the maximum finite gain of the actual curve (y-axis only).
         ref_peak = pattern.reference_peak(pattern_params)
         if ref_peak is None:
             ref_peak = float(np.nanmax(G)) if np.any(np.isfinite(G)) else 0.0
@@ -180,8 +184,9 @@ class PlotWidget(QWidget):
 
         self._ax.clear()
         self._ax.plot(phi, G, color='steelblue', linewidth=1.5, label=pattern.name)
-        self._ax.axhline(y=gmax, color='gray', linewidth=0.6,
-                         linestyle='--', alpha=0.5)
+        if peak_referenced:
+            self._ax.axhline(y=gmax, color='gray', linewidth=0.6,
+                             linestyle='--', alpha=0.5)
 
         # Contour lines and table
         phi_pos = phi[phi >= 0]
@@ -191,25 +196,33 @@ class PlotWidget(QWidget):
         mf = QFont("Courier New", 9)
 
         self._contour_lines.clear()
-        for row, (db, color) in enumerate(zip(DB_LEVELS, _CONTOUR_COLORS)):
-            angle = first_descent(phi_pos, G_pos, gmax - db)
-            if angle is not None:
-                # Always draw; visibility controlled by checkbox
-                l1 = self._ax.axvline(x= angle, color=color, linewidth=0.8,
-                                      linestyle=':', alpha=0.7,
-                                      visible=show_contours)
-                l2 = self._ax.axvline(x=-angle, color=color, linewidth=0.8,
-                                      linestyle=':', alpha=0.7,
-                                      visible=show_contours)
-                self._contour_lines.extend([l1, l2])
-                nadir_scan = theta_nadir + angle
-                self._table.setItem(row, 1, _cell(f"{angle:.3f}", mf))
-                self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", mf))
-                self._table.setItem(row, 3, _cell(f"base scan {theta_nadir:.3f}", mf))
-            else:
-                self._table.setItem(row, 1, _cell("N/A", mf))
-                self._table.setItem(row, 2, _cell("N/A", mf))
-                self._table.setItem(row, 3, _cell("beyond scan range / floor", mf))
+        # For earth-station envelopes, suppress the lines and table values
+        # rather than show misleading "dB below peak" numbers (see above).
+        if not peak_referenced:
+            for row in range(len(DB_LEVELS)):
+                self._table.setItem(row, 1, _cell("—", mf))
+                self._table.setItem(row, 2, _cell("—", mf))
+                self._table.setItem(row, 3, _cell("N/A for earth-station envelope", mf))
+        else:
+            for row, (db, color) in enumerate(zip(DB_LEVELS, _CONTOUR_COLORS)):
+                angle = first_descent(phi_pos, G_pos, gmax - db)
+                if angle is not None:
+                    # Always draw; visibility controlled by checkbox
+                    l1 = self._ax.axvline(x= angle, color=color, linewidth=0.8,
+                                          linestyle=':', alpha=0.7,
+                                          visible=show_contours)
+                    l2 = self._ax.axvline(x=-angle, color=color, linewidth=0.8,
+                                          linestyle=':', alpha=0.7,
+                                          visible=show_contours)
+                    self._contour_lines.extend([l1, l2])
+                    nadir_scan = theta_nadir + angle
+                    self._table.setItem(row, 1, _cell(f"{angle:.3f}", mf))
+                    self._table.setItem(row, 2, _cell(f"{nadir_scan:.3f}", mf))
+                    self._table.setItem(row, 3, _cell(f"base scan {theta_nadir:.3f}", mf))
+                else:
+                    self._table.setItem(row, 1, _cell("N/A", mf))
+                    self._table.setItem(row, 2, _cell("N/A", mf))
+                    self._table.setItem(row, 3, _cell("beyond scan range / floor", mf))
 
         self._ax.set_xlabel("Angle from Boresight (degrees)")
         self._ax.set_ylabel("Gain (dBi)")
